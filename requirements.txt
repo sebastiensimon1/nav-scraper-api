@@ -1,0 +1,14 @@
+flask==3.0.0
+flask-cors==4.0.0
+requests==2.31.0
+gunicorn==21.2.0
+```
+
+### 2. Create `Procfile` (no file extension!)
+```
+web: gunicorn app:app
+```
+
+### 3. Create `runtime.txt` (optional but recommended)
+```
+python-3.11.6
