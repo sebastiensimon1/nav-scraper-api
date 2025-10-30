@@ -177,41 +177,5 @@ def get_nav():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
-    print(f"🚀 Starting server on port {port}")
+    print(f"🚀 Starting Flask server on 0.0.0.0:{port}")
     app.run(host='0.0.0.0', port=port, debug=False)
-```
-
----
-
-## `requirements.txt`
-```
-flask==3.0.0
-flask-cors==4.0.0
-requests==2.31.0
-gunicorn==21.2.0
-```
-
----
-
-## `Procfile`
-```
-web: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120
-```
-
----
-
-## `runtime.txt`
-```
-python-3.11.6
-```
-
----
-
-## `.gitignore`
-```
-__pycache__/
-*.pyc
-.env
-venv/
-*.log
-.DS_Store
