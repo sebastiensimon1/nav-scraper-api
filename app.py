@@ -8,10 +8,8 @@ import os
 app = Flask(__name__)
 CORS(app)
 
-ROUNDHILL_ETFS = ['TSLW', 'HOOW', 'PLTW', 'MSTY', 'NVDW', 'NVDY', 'YBTC', 'CONY', 'NVDL']
-
 def get_navs_from_csv(tickers):
-    """Fetch NAV for Roundhill ETFs from single CSV file"""
+    """Fetch NAV for any tickers from Roundhill CSV file"""
     csv_url = "https://www.roundhillinvestments.com/assets/data/FilepointRoundhill.40RU.RU_DailyNAV.csv"
     
     headers = {
@@ -48,11 +46,17 @@ def get_navs_from_csv(tickers):
         
         print(f"📊 CSV has {len(df)} rows")
         
+        # Get list of all available tickers in the CSV
+        available_tickers = df['Fund Ticker'].str.upper().unique().tolist()
+        print(f"📋 Available tickers in CSV: {', '.join(available_tickers)}")
+        
         nav_data = {}
         
         for ticker in tickers:
+            ticker_upper = ticker.upper()
+            
             # Find the row where 'Fund Ticker' matches our ticker
-            matching_rows = df[df['Fund Ticker'].str.upper() == ticker.upper()]
+            matching_rows = df[df['Fund Ticker'].str.upper() == ticker_upper]
             
             if not matching_rows.empty:
                 # Get the NAV value from the first matching row
@@ -62,35 +66,43 @@ def get_navs_from_csv(tickers):
                 if pd.notna(nav_value):
                     try:
                         nav_float = float(nav_value)
-                        nav_data[ticker] = nav_float
-                        print(f"✅ {ticker}: ${nav_float:.2f}")
+                        nav_data[ticker_upper] = nav_float
+                        print(f"✅ {ticker_upper}: ${nav_float:.2f}")
                     except (ValueError, TypeError):
-                        nav_data[ticker] = None
-                        print(f"❌ {ticker}: Invalid NAV value '{nav_value}'")
+                        nav_data[ticker_upper] = None
+                        print(f"❌ {ticker_upper}: Invalid NAV value '{nav_value}'")
                 else:
-                    nav_data[ticker] = None
-                    print(f"❌ {ticker}: NAV is null")
+                    nav_data[ticker_upper] = None
+                    print(f"❌ {ticker_upper}: NAV is null")
             else:
-                nav_data[ticker] = None
-                print(f"❌ {ticker}: Not found in CSV")
+                nav_data[ticker_upper] = None
+                print(f"❌ {ticker_upper}: Not found in CSV")
         
-        return nav_data
+        return nav_data, available_tickers
         
     except Exception as e:
         print(f"❌ Error fetching CSV: {str(e)}")
         import traceback
         traceback.print_exc()
-        return {ticker: None for ticker in tickers}
+        return {ticker: None for ticker in tickers}, []
 
 @app.route('/', methods=['GET'])
 def home():
     """Health check endpoint"""
+    # Get available tickers dynamically
+    try:
+        _, available_tickers = get_navs_from_csv([])
+        supported_tickers = available_tickers if available_tickers else []
+    except:
+        supported_tickers = []
+    
     return jsonify({
         'status': 'online',
-        'service': 'Roundhill NAV Scraper API',
-        'version': '2.0.0',
+        'service': 'NAV Scraper API',
+        'version': '3.0.0',
         'method': 'CSV',
-        'supported_tickers': ROUNDHILL_ETFS
+        'note': 'Enter any ticker to check if NAV data is available',
+        'available_tickers': supported_tickers if supported_tickers else 'Could not fetch at this time'
     })
 
 @app.route('/health', methods=['GET'])
@@ -100,36 +112,86 @@ def health():
 
 @app.route('/get-nav', methods=['POST'])
 def get_nav():
-    """Main endpoint to fetch NAV data for multiple tickers"""
+    """Main endpoint to fetch NAV data for any tickers
+    
+    Accepts multiple formats:
+    - {"tickers": ["TSLW", "HOOW"]} - Array of tickers
+    - {"ticker": "TSLW"} - Single ticker string
+    - {"tickers": "TSLW,HOOW,MSTY"} - Comma-separated string
+    """
     try:
         data = request.json
-        tickers = data.get('tickers', [])
         
-        if not isinstance(tickers, list):
-            return jsonify({'error': 'Tickers must be an array'}), 400
+        # Handle different input formats
+        tickers = None
+        
+        # Format 1: Array of tickers {"tickers": ["TSLW", "HOOW"]}
+        if 'tickers' in data:
+            if isinstance(data['tickers'], list):
+                tickers = data['tickers']
+            # Format 2: Comma-separated string {"tickers": "TSLW,HOOW,MSTY"}
+            elif isinstance(data['tickers'], str):
+                tickers = [t.strip().upper() for t in data['tickers'].split(',') if t.strip()]
+            else:
+                return jsonify({
+                    'error': 'Invalid format',
+                    'message': 'tickers must be an array or comma-separated string'
+                }), 400
+        
+        # Format 3: Single ticker {"ticker": "TSLW"}
+        elif 'ticker' in data:
+            if isinstance(data['ticker'], str):
+                tickers = [data['ticker'].strip().upper()]
+            else:
+                return jsonify({
+                    'error': 'Invalid format',
+                    'message': 'ticker must be a string'
+                }), 400
+        
+        else:
+            return jsonify({
+                'error': 'Missing parameter',
+                'message': 'Request must include either "ticker" or "tickers"',
+                'examples': [
+                    {'tickers': ['TSLW', 'HOOW']},
+                    {'ticker': 'TSLW'},
+                    {'tickers': 'TSLW,HOOW,MSTY'}
+                ]
+            }), 400
+        
+        if not tickers:
+            return jsonify({
+                'error': 'Empty tickers',
+                'message': 'No tickers provided'
+            }), 400
         
         print(f"\n=== NAV DATA FETCHING START ===")
         print(f"Requested tickers: {tickers}")
         
-        # Filter to only Roundhill ETFs
-        roundhill_tickers = [t for t in tickers if t.upper() in ROUNDHILL_ETFS]
-        
-        if not roundhill_tickers:
-            print("ℹ️ No Roundhill ETFs requested")
-            return jsonify({'navData': {}})
-        
-        print(f"📊 Processing {len(roundhill_tickers)} Roundhill ETFs: {', '.join(roundhill_tickers)}")
-        
-        # Fetch all NAVs from CSV (much faster than individual requests!)
-        nav_data = get_navs_from_csv(roundhill_tickers)
+        # Fetch NAV data for ALL requested tickers (no filtering)
+        nav_data, available_tickers = get_navs_from_csv(tickers)
         
         print(f"\n=== NAV DATA FETCHING COMPLETE ===")
         print(f"Results: {nav_data}")
         
-        return jsonify({'navData': nav_data})
+        # Build response
+        response_data = {
+            'navData': nav_data
+        }
+        
+        # Check if any tickers were not found
+        not_found = [t.upper() for t in tickers if nav_data.get(t.upper()) is None]
+        
+        if not_found:
+            response_data['message'] = f"Some tickers not found: {', '.join(not_found)}"
+            response_data['available_tickers'] = available_tickers
+        
+        return jsonify(response_data)
         
     except Exception as e:
         print(f"❌ Error in get-nav endpoint: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({
             'error': 'Internal server error',
             'details': str(e)
